@@ -4,8 +4,8 @@ project(opengpu)
 
 add_subdirectory("third-party/glm")
 
-include_directories("third-party")
+include_directories("third-party" "third-party/glew/include")
 
 add_executable(opengpu "test.cpp" "third-party/src/glad.c" "third-party/src/stb.cpp")
 
-target_link_libraries(opengpu opengl32 glm)
+target_link_libraries(opengpu opengl32  glm)
