@@ -2,15 +2,7 @@
 #include<glad/glad.h>
 #include <gl/GL.h>
 #include <GLFW/glfw3.h>
-#include<stb/stb_image.h>
-#include<glm/glm.hpp>
-#include<glm/gtc/matrix_transform.hpp>
-#include<glm/gtc/type_ptr.hpp>
 #include "helper.h"
-#include <thread>
-
-
-std::thread globalWindowThread;
 
 void runWinProc(GLFWwindow* window) {
 	while (!glfwWindowShouldClose(window)) {
@@ -29,9 +21,10 @@ void CreateOpenGLContext() {
 	// Tell GLFW we are using the CORE profile
 	// So that means we only have the modern functions
 	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+	glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
 
 	GLFWwindow* window = glfwCreateWindow(1, 1, "YoutubeOpenGL", NULL, NULL);
-	
+
 	// Error check if the window fails to create
 	if (window == NULL)
 	{
@@ -42,14 +35,13 @@ void CreateOpenGLContext() {
 	// Introduce the window into the current context
 	glfwMakeContextCurrent(window);
 
-	globalWindowThread = std::thread(runWinProc,window);
-	
-	gladLoadGL();
+	if (gladLoadGL() == GL_FALSE) {
+		std::cout << "Can't load GL " << std::endl;
 
-	if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
-	{
-		std::cout << "Failed to initialize OpenGL context" << std::endl;
+		return;
 	}
+	
+	
 }
 
 void DestroyOpenGLContext() {
@@ -171,6 +163,14 @@ struct GPUProgram {
 	}
 
 
+	template<typename T,size_t NELE=1>
+	static void AssignDataToBuffer(LayoutBuffer<T, NELE>& layout, int offset, T* data,size_t customSize=sizeof(T)*NELE) {
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, layout.buffer);
+		glBufferSubData(GL_SHADER_STORAGE_BUFFER, offset, customSize, data);
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+	}
+
+
 	void Delete() {
 		for (ComputeShader& shader : shaders) {
 			glDetachShader(ID,shader.ID);
@@ -183,75 +183,42 @@ struct GPUProgram {
 
 
 int main(const int argc,const char** argv){
-
+	
 	CreateOpenGLContext();
-	try {
-		GPUProgram program;
-		const char* sample1 = R"(
-#version 460 core
-layout (local_size_x=1,local_size_y=1,local_size_z=1) in;
-layout (binding = 0) buffer SSBO{
-	uint rows;
-	uint cols;
-} roster;
 
-layout (binding = 1) buffer RSBO{
-	double data[];
-} mdoc;
+	GPUProgram program;
 
-shared uint _shared=0;
+	const char* source = "#version 430\n\
+                      layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;\n\
+                      layout(binding = 0) buffer InData { float a; float b; };\n\
+                      layout(binding = 1) buffer OutData { float c; };\n\
+                      void main() {\n\
+                          c = a + b;\n\
+                      }";
 
-void main(){
-	uint index=gl_GlobalInvocationID.x;
-	mdoc.data[index]=gl_NumWorkGroups.x;
-}
-)";
+	float a = 1.0f;
+	float b=2.0f;
+	float c = 0.0f;
 
-		long long computeCampat = 1000;
+	LayoutBuffer<float, 2> inputLayoutBuffer;
+	LayoutBuffer<float> outputLayoutBuffer;
 
-		struct SSBO {
-			unsigned int rows;
-			unsigned int cols;
-		};
+	GPUProgram::CreateAndBindBuffer(0, (float*)nullptr, inputLayoutBuffer);
+	GPUProgram::CreateAndBindBuffer(1, (float*)nullptr, outputLayoutBuffer);
 
+	GPUProgram::AssignDataToBuffer(inputLayoutBuffer, 0, &a,sizeof(float));
+	GPUProgram::AssignDataToBuffer(inputLayoutBuffer, sizeof(float), &b,sizeof(float));
 
+	ComputeShader shader(source);
 
-		SSBO sbo;
-
-		sbo.rows = computeCampat;
-		sbo.cols = 1;
-
-		LayoutBuffer<SSBO> ssbolayout;
-		LayoutBuffer<double,1000> sortBufferLayout;
-
-		GPUProgram::CreateAndBindBuffer(0, &sbo, ssbolayout);
-		GPUProgram::CreateAndBindBuffer(1, (double*)nullptr, sortBufferLayout);
-
-		ComputeShader shader1(sample1);
-		program.AttachShader(shader1);
+	program.AttachShader(shader);
+	program.Link();
+	program.Run(1, 1, 1);
 
 
+	GPUProgram::GetOutputBuffer(outputLayoutBuffer, &c);
 
-		program.Link();
-		program.Run(computeCampat, 1, 1);
-
-		double* resultFromGPU = new double[computeCampat];
-		
-		GPUProgram::GetOutputBuffer(sortBufferLayout, resultFromGPU);
-
-
-		for (int i = 0; i < computeCampat; i++) {
-			std::cout << resultFromGPU[i] << std::endl;
-		}
-
-		//std::cout << outsbo.roaster << std::endl;
-
-		program.Delete();
-
-	}
-	catch (std::runtime_error& error) {
-		std::cerr << error.what() << std::endl;
-	}
+	std::cout << c << std::endl;
 	DestroyOpenGLContext();
 	return 0;
 }
