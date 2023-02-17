@@ -2,6 +2,7 @@
 #include <fstream>
 #include <string>
 #include <glad/glad.h>
+#include <glm/glm.hpp>
 #include <vector>
 #include <iostream>
 
@@ -68,4 +69,27 @@ static void CheckForProgramError(GLuint program) {
 	glDeleteProgram(program);
 
 	throw std::runtime_error(&errorLog[0]);
+}
+
+
+template<typename T>
+void setUniformValue(GLint loc, const T& value) {
+	if constexpr (std::is_same_v<T, int>) {
+		glUniform1i(loc, value);
+	}
+	else if constexpr (std::is_same_v<T, float>) {
+		glUniform1f(loc, value);
+	}
+	else if constexpr (std::is_same_v<T, bool>) {
+		glUniform1i(loc, value);
+	}
+	else if constexpr (std::is_same_v<T, glm::mat2>) {
+		glUniformMatrix2fv(loc, 1, GL_FALSE, glm::value_ptr(value));
+	}
+	else if constexpr (std::is_same_v<T, glm::mat3>) {
+		glUniformMatrix3fv(loc, 1, GL_FALSE, glm::value_ptr(value));
+	}
+	else if constexpr (std::is_same_v<T, glm::mat4>) {
+		glUniformMatrix4fv(loc, 1, GL_FALSE, glm::value_ptr(value));
+	} // Add additional cases for other types as needed
 }

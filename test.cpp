@@ -1,6 +1,7 @@
 #include <iostream>
 #include<glad/glad.h>
 #include <gl/GL.h>
+#include <cmath>
 #include <GLFW/glfw3.h>
 #include "helper.h"
 
@@ -94,14 +95,33 @@ template<typename T,size_t NELE=1>
 struct LayoutBuffer {
 	unsigned int index;
 	unsigned int buffer;
-	const size_t size=sizeof(T)*NELE;
+	const size_t size= sizeof(T)*NELE;
+
+	~LayoutBuffer() {
+		glDeleteBuffers(1, &buffer);
+	}
+};
+
+template<typename T,size_t NELE=1>
+struct UniformBuffer {
+	void* clientBuffer;
+	unsigned int location;
+	const size_t size = sizeof(T) * NELE;
 };
 
 struct GPUProgram {
 	GLuint ID;
+	bool isSafeRunning;
+	bool isRunning;
 	std::vector<ComputeShader> shaders;
 	GPUProgram() {
 		ID = glCreateProgram();
+		isSafeRunning = false;
+		isRunning = false;
+	}
+
+	~GPUProgram() {
+		Delete();
 	}
 
 	void Link() {
@@ -127,14 +147,35 @@ struct GPUProgram {
 		return wgi;
 	}
 
-	void Run(unsigned int xGroup,unsigned int yGroup,unsigned int zGroup) {
+	void Run(unsigned int xGroup, unsigned int yGroup, unsigned int zGroup) {
+		std::cout << xGroup << "," << yGroup << "," << zGroup << std::endl;
+		isRunning = true;
 		glUseProgram(ID);
 		glDispatchCompute(xGroup, yGroup, zGroup);
 		glMemoryBarrier(GL_ALL_BARRIER_BITS);
+		isRunning = false;
+	}
+
+	void RunSafe() {
+		isSafeRunning = true;
+		glUseProgram(ID);
+	}
+
+	template<typename T,size_t NELE>
+	void GetUniformLocation(const char* unfiromName,UniformBuffer<T,NELE>& outBuffer,void* dataToUpload) {
+		if (shaders.empty())throw std::runtime_error("you haven't attached any shader");
+
+		if (!isSafeRunning)throw std::runtime_error("gpu program isn't running in safe mode");
+
+		GLuint location=glGetUniformLocation(ID, unfiromName);
+
+		
+
 	}
 
 	void AttachShader(ComputeShader& shader) {
 		if (!shader.IsValidShader())throw shader_exception(shader.ID,"Invalid shader!");
+
 
 		shaders.push_back(shader);
 
@@ -170,7 +211,7 @@ struct GPUProgram {
 		glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 	}
 
-
+private:
 	void Delete() {
 		for (ComputeShader& shader : shaders) {
 			glDetachShader(ID,shader.ID);
@@ -181,11 +222,7 @@ struct GPUProgram {
 	}
 };
 
-
-int main(const int argc,const char** argv){
-	
-	CreateOpenGLContext();
-
+void test1() {
 	GPUProgram program;
 
 	const char* source = "#version 430\n\
@@ -197,7 +234,7 @@ int main(const int argc,const char** argv){
                       }";
 
 	float a = 1.0f;
-	float b=2.0f;
+	float b = 2.0f;
 	float c = 0.0f;
 
 	LayoutBuffer<float, 2> inputLayoutBuffer;
@@ -206,8 +243,8 @@ int main(const int argc,const char** argv){
 	GPUProgram::CreateAndBindBuffer(0, (float*)nullptr, inputLayoutBuffer);
 	GPUProgram::CreateAndBindBuffer(1, (float*)nullptr, outputLayoutBuffer);
 
-	GPUProgram::AssignDataToBuffer(inputLayoutBuffer, 0, &a,sizeof(float));
-	GPUProgram::AssignDataToBuffer(inputLayoutBuffer, sizeof(float), &b,sizeof(float));
+	GPUProgram::AssignDataToBuffer(inputLayoutBuffer, 0, &a, sizeof(float));
+	GPUProgram::AssignDataToBuffer(inputLayoutBuffer, sizeof(float), &b, sizeof(float));
 
 	ComputeShader shader(source);
 
@@ -216,9 +253,95 @@ int main(const int argc,const char** argv){
 	program.Run(1, 1, 1);
 
 
+
 	GPUProgram::GetOutputBuffer(outputLayoutBuffer, &c);
 
 	std::cout << c << std::endl;
+}
+
+void test2() {
+	const char* computeShaderSource = R"(
+								
+#version 430
+
+layout(local_size_x = 4, local_size_y = 4) in;
+
+layout(std430, binding = 0) buffer BufferA {
+    float A[];
+};
+
+layout(std430, binding = 1) buffer BufferB {
+    float B[];
+};
+
+layout(std430, binding = 2) buffer BufferC {
+    float C[];
+};
+layout (std430, binding =3 ) buffer Information{
+ uint numColsA;
+ uint numRowsA;
+ uint numColsB;
+};
+
+void main() {
+    uint row = gl_GlobalInvocationID.x;
+    uint col = gl_GlobalInvocationID.y;
+
+    float sum = 0.0;
+    for (uint i = 0; i < numColsA; i++) {
+        sum += A[row * numColsA + i] * B[i * numColsB + col];
+    }
+
+    C[row * numColsB + col] = sum;
+}
+)";
+
+	GPUProgram program;
+
+	ComputeShader computeShader(computeShaderSource);
+
+	
+	
+	float a[] = {1,1,1,1,1,1,1,1, 1,1,1,1, 1,1,1,0};
+	float b[] = { 1,1,1,1,1,1,1,1, 1,1,1,1, 1,1,1,1 };
+	int colA=4;
+	int rowA = 4;
+	int colB=4;
+
+	LayoutBuffer<float, 16> matrixALayout;
+	LayoutBuffer<float, 16> matrixBLayout;
+	LayoutBuffer<float, 16> outputCLayout;
+	GPUProgram::CreateAndBindBuffer(0, a, matrixALayout);
+	GPUProgram::CreateAndBindBuffer(1, b, matrixBLayout);
+	GPUProgram::CreateAndBindBuffer(2, (float*)nullptr, outputCLayout);
+
+	LayoutBuffer<int, 3> informationLayout;
+	GPUProgram::CreateAndBindBuffer(3, (int*)nullptr, informationLayout);
+	GPUProgram::AssignDataToBuffer(informationLayout, 0, &colA, sizeof(int));
+	GPUProgram::AssignDataToBuffer(informationLayout, sizeof(float), &rowA, sizeof(int));
+	GPUProgram::AssignDataToBuffer(informationLayout, 2*sizeof(float), &colB, sizeof(int));
+
+
+	program.AttachShader(computeShader);
+
+	program.Link();
+	program.Run(4,4, 1);
+
+	float* result = new float[16];
+	GPUProgram::GetOutputBuffer(outputCLayout, result);
+
+	for (int i = 0; i < 16; i++) {
+		std::cout << result[i] << std::endl;
+	}
+
+}
+
+int main(const int argc,const char** argv){
+	
+	CreateOpenGLContext();
+	test1();
+
+	test2();
 	DestroyOpenGLContext();
 	return 0;
 }
